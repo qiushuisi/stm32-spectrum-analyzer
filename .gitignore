@@ -13,7 +13,8 @@ firmware/Release/
 __pycache__/
 *.pyc
 .venv/
-wave.png
+# 只忽略仓库根目录下的输出图；docs/wave.png 要提交
+/wave.png
 tempCodeRunnerFile.py
 
 # OS
