@@ -1,0 +1,21 @@
+﻿# CubeIDE build outputs
+firmware/Debug/
+firmware/Release/
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+wave.png
+tempCodeRunnerFile.py
+
+# OS
+Thumbs.db
+desktop.ini
