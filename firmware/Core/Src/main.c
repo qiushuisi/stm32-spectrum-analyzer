@@ -30,6 +30,7 @@
 #include "stdio.h"
 #include "ringbuf.h"
 #include <string.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -82,6 +83,8 @@
 	char     line[80];       /* 攒一行命令 */
 	uint16_t line_len = 0;
 	uint8_t line_overflow = 0;
+	volatile uint16_t led_on_ms  = 2000;
+	volatile uint16_t led_off_ms = 4000;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -152,14 +155,15 @@ void led_task(void)
     uint32_t now = HAL_GetTick();   /* 上电以来的毫秒数 */
 
     /* 灯亮时等 2000 ms，灯灭时等 4000 ms（比例为便于观察放大 10 倍） */
-    if (now - last >= (on ? 2000 : 4000))
-        {
-            last = now;
-            on = !on;
-            /* 根据 on 设置灯的高低电平 */
-            if(on)	HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET);//1  light on
-            else	HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET);//0 off
-        }
+    uint32_t p = (on ? led_on_ms : led_off_ms);
+    if (now - last >= p)
+	{
+		last = now;
+		on = !on;
+		/* 根据 on 设置灯的高低电平 */
+		if(on)	HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET);//1  light on
+		else	HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET);//0 off
+	}
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -173,9 +177,28 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 void handle_line(char *s)
 {
-    HAL_UART_Transmit(&huart1, (uint8_t *)"[", 1, 10);
-    HAL_UART_Transmit(&huart1, (uint8_t *)s, strlen(s), 10);
-    HAL_UART_Transmit(&huart1, (uint8_t *)"]\r\n", 3, 10);
+    if (strncmp(s, "SET ", 4) == 0)          /* 前缀匹配 */
+    {
+        uint32_t v = atoi(s + 4);            /* 跳过 "SET " 取数字 */
+        if (v < 50 || v > 20000)
+        {
+            printf("ERR range 50-20000\r\n");
+        }
+        else
+        {
+            led_on_ms  = (uint16_t)v;
+            led_off_ms = (uint16_t)(v * 2);
+            printf("OK on=%u off=%u\r\n", led_on_ms, led_off_ms);
+        }
+    }
+    else if (strcmp(s, "GET") == 0)           /* 完整匹配 */
+    {
+        printf("on=%u off=%u\r\n", led_on_ms, led_off_ms);
+    }
+    else
+    {
+        printf("ERR unknown\r\n");
+    }
 }
 /* USER CODE END 0 */
 
@@ -229,11 +252,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  if (cnt != last)          /* 有新的一帧数据了 */
-//	  {
-//		  last = cnt;
-//		  send_frame(seq++);
-//	  }
+	  if (cnt != last)          /* 有新的一帧数据了 */
+	  {
+		  last = cnt;
+		  send_frame(seq++);
+	  }
 	  led_task();
 
 	  if (rx_overflow)
