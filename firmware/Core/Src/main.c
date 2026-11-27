@@ -29,7 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
 #include "ringbuf.h"
-
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -74,6 +74,14 @@
 	     917,  974, 1033, 1095, 1159, 1225, 1294, 1364,
 	    1436, 1509, 1584, 1659, 1736, 1813, 1891, 1969,
 	};
+
+	uint8_t rx_byte;
+	uint8_t rb_storage[64];
+	ringbuf_t rb;
+	volatile uint8_t rx_overflow = 0;   /* 1 = 上次 ring_put 失败过 */
+	char     line[80];       /* 攒一行命令 */
+	uint16_t line_len = 0;
+	uint8_t line_overflow = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -135,6 +143,40 @@ void send_frame(uint16_t seq)
 
     HAL_UART_Transmit(&huart1, frame, 4 + N * 2 + 2, 1000);   /* 1030 */
 }
+
+void led_task(void)
+{
+    static uint32_t last = 0;    /* 上次切换的时刻 */
+    static uint8_t  on   = 0;    /* 0=灭 1=亮 */
+
+    uint32_t now = HAL_GetTick();   /* 上电以来的毫秒数 */
+
+    /* 灯亮时等 2000 ms，灯灭时等 4000 ms（比例为便于观察放大 10 倍） */
+    if (now - last >= (on ? 2000 : 4000))
+        {
+            last = now;
+            on = !on;
+            /* 根据 on 设置灯的高低电平 */
+            if(on)	HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET);//1  light on
+            else	HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET);//0 off
+        }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART1)
+	{
+		if (!ring_put(&rb, rx_byte))   rx_overflow = 1;
+		HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+	}
+}
+
+void handle_line(char *s)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t *)"[", 1, 10);
+    HAL_UART_Transmit(&huart1, (uint8_t *)s, strlen(s), 10);
+    HAL_UART_Transmit(&huart1, (uint8_t *)"]\r\n", 3, 10);
+}
 /* USER CODE END 0 */
 
 /**
@@ -179,17 +221,49 @@ int main(void)
   uint32_t last = 0;
   uint16_t seq = 0;
   HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)sine_table, 128, DAC_ALIGN_12B_R);
+  ring_init(&rb, rb_storage, sizeof(rb_storage));
+  HAL_UART_Receive_IT(&huart1, &rx_byte, 1);/* 启动第一次接收 */
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  if (cnt != last)          /* 有新的一帧数据了 */
+//	  if (cnt != last)          /* 有新的一帧数据了 */
+//	  {
+//		  last = cnt;
+//		  send_frame(seq++);
+//	  }
+	  led_task();
+
+	  if (rx_overflow)
+	  {
+	      rx_overflow = 0;
+	      uint8_t dump;
+	      while (ring_get(&rb, &dump)) { }        /* 清空缓冲区，脏数据不要了 */
+	      const char *err = "ERR overflow\r\n";
+	      HAL_UART_Transmit(&huart1, (uint8_t *)err, 14, 100);
+	  }
+
+	  uint8_t c;
+	  while (ring_get(&rb, &c))
+	  {
+	      if (c == '\n')
 	      {
-	          last = cnt;
-	          send_frame(seq++);
+	          line[line_len] = '\0';
+	          if (line_len > 0 && !line_overflow)   /* 没溢出才处理 */
+	              handle_line(line);
+	          line_len = 0;
+	          line_overflow = 0;                    /* 一行结束，清标志 */
 	      }
+	      else if (c != '\r')
+	      {
+	          if (line_len < sizeof(line) - 1)
+	              line[line_len++] = c;
+	          else
+	              line_overflow = 1;                /* 只置标志，继续吞字符 */
+	      }
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
